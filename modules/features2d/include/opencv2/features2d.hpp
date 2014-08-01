@@ -943,12 +943,12 @@ protected:
     void detectImpl(InputArray image, std::vector<KeyPoint>& keypoints, InputArray mask) const;
     void computeImpl(InputArray image, std::vector<KeyPoint>& keypoints, OutputArray descriptors) const;
 
-    CV_PROP bool extended;
-    CV_PROP bool upright;
-    CV_PROP float threshold;
-    CV_PROP int octaves;
-    CV_PROP int sublevels;
-    CV_PROP int diffusivity;
+    CV_PROP_RW bool extended;
+    CV_PROP_RW bool upright;
+    CV_PROP_RW float threshold;
+    CV_PROP_RW int octaves;
+    CV_PROP_RW int sublevels;
+    CV_PROP_RW int diffusivity;
 };
 
 /*!
@@ -984,13 +984,13 @@ protected:
     void computeImpl(InputArray image, std::vector<KeyPoint>& keypoints, OutputArray descriptors) const;
     void detectImpl(InputArray image, std::vector<KeyPoint>& keypoints, InputArray mask = noArray()) const;
 
-    CV_PROP int descriptor;
-    CV_PROP int descriptor_channels;
-    CV_PROP int descriptor_size;
-    CV_PROP float threshold;
-    CV_PROP int octaves;
-    CV_PROP int sublevels;
-    CV_PROP int diffusivity;
+    CV_PROP_RW int descriptor;
+    CV_PROP_RW int descriptor_channels;
+    CV_PROP_RW int descriptor_size;
+    CV_PROP_RW float threshold;
+    CV_PROP_RW int octaves;
+    CV_PROP_RW int sublevels;
+    CV_PROP_RW int diffusivity;
 };
 /****************************************************************************************\
 *                                      Distance                                          *
