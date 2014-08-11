@@ -194,11 +194,26 @@ Learn about how to use the feature points  detectors, descriptors and matching f
 
                         *Author:* Fedor Morozov
 
-                        Use *AKAZE* local features to find correspondence between two images.
+                        Using *AKAZE* local features to find correspondence between two images.
 
   ===================== ==============================================
 
   .. |AkazeMatch| image:: images/AKAZE_Match_Tutorial_Cover.png
+                     :height: 90pt
+                     :width:  90pt
+
+  ===================== ==============================================
+   |AkazeTracking|         **Title:** :ref:`akazeTracking`
+
+                           *Compatibility:* > OpenCV 3.0
+
+                           *Author:* Fedor Morozov
+
+                           Using *AKAZE* and *ORB* for planar object tracking.
+
+  ===================== ==============================================
+
+  .. |AkazeTracking| image:: images/AKAZE_Tracking_Tutorial_Cover.png
                      :height: 90pt
                      :width:  90pt
 
