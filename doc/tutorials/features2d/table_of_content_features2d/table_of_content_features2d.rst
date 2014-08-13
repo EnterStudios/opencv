@@ -236,3 +236,4 @@ Learn about how to use the feature points  detectors, descriptors and matching f
    ../feature_homography/feature_homography
    ../detection_of_planar_objects/detection_of_planar_objects
    ../akaze_matching/akaze_matching
+   ../akaze_tracking/akaze_tracking

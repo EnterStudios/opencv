@@ -3,9 +3,15 @@
 
 #include <opencv2/core.hpp>
 #include <vector>
+#include "stats.h"
 
 using namespace std;
 using namespace cv;
+
+void drawBoundingBox(Mat image, vector<Point2f> bb);
+void drawStatistics(Mat image, const Stats& stats);
+void printStatistics(string name, Stats stats);
+vector<Point2f> Points(vector<KeyPoint> keypoints);
 
 void drawBoundingBox(Mat image, vector<Point2f> bb)
 {
