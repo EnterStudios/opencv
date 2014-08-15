@@ -47,8 +47,8 @@ void AKAZEFeatures::Allocate_Memory_Evolution(void) {
   int level_height = 0, level_width = 0;
 
   // Allocate the dimension of the matrices for the evolution
-  for (int i = 0; i <= options_.omax - 1; i++) {
-    rfactor = 1.0f / pow(2.f, i);
+  for (int i = 0, power = 1; i <= options_.omax - 1; i++, power *= 2) {
+    rfactor = 1.0f / power;
     level_height = (int)(options_.img_height*rfactor);
     level_width = (int)(options_.img_width*rfactor);
 
@@ -190,7 +190,7 @@ public:
 
     for (int i = range.start; i < range.end; i++)
     {
-      float ratio = pow(2.f, (float)evolution[i].octave);
+      float ratio = fastpow(2, evolution[i].octave);
       int sigma_size_ = fRound(evolution[i].esigma * options_.derivative_factor / ratio);
 
       compute_scharr_derivatives(evolution[i].Lsmooth, evolution[i].Lx, 1, 0, sigma_size_);
@@ -272,7 +272,11 @@ void AKAZEFeatures::Find_Scale_Space_Extrema(std::vector<cv::KeyPoint>& kpts)
   }
 
   for (size_t i = 0; i < evolution_.size(); i++) {
+    float* prev = evolution_[i].Ldet.ptr<float>(0);
+    float* curr = evolution_[i].Ldet.ptr<float>(1);
     for (int ix = 1; ix < evolution_[i].Ldet.rows - 1; ix++) {
+      float* next = evolution_[i].Ldet.ptr<float>(ix + 1);
+
       for (int jx = 1; jx < evolution_[i].Ldet.cols - 1; jx++) {
         is_extremum = false;
         is_repeated = false;
@@ -281,21 +285,21 @@ void AKAZEFeatures::Find_Scale_Space_Extrema(std::vector<cv::KeyPoint>& kpts)
 
         // Filter the points with the detector threshold
         if (value > options_.dthreshold && value >= options_.min_dthreshold &&
-            value > *(evolution_[i].Ldet.ptr<float>(ix)+jx - 1) &&
-            value > *(evolution_[i].Ldet.ptr<float>(ix)+jx + 1) &&
-            value > *(evolution_[i].Ldet.ptr<float>(ix - 1) + jx - 1) &&
-            value > *(evolution_[i].Ldet.ptr<float>(ix - 1) + jx) &&
-            value > *(evolution_[i].Ldet.ptr<float>(ix - 1) + jx + 1) &&
-            value > *(evolution_[i].Ldet.ptr<float>(ix + 1) + jx - 1) &&
-            value > *(evolution_[i].Ldet.ptr<float>(ix + 1) + jx) &&
-            value > *(evolution_[i].Ldet.ptr<float>(ix + 1) + jx + 1)) {
+            value > curr[jx-1] &&
+            value > curr[jx+1] &&
+            value > prev[jx-1] &&
+            value > prev[jx] &&
+            value > prev[jx+1] &&
+            value > next[jx-1] &&
+            value > next[jx] &&
+            value > next[jx+1]) {
 
           is_extremum = true;
           point.response = fabs(value);
           point.size = evolution_[i].esigma*options_.derivative_factor;
           point.octave = (int)evolution_[i].octave;
           point.class_id = (int)i;
-          ratio = pow(2.f, point.octave);
+          ratio = fastpow(2, point.octave);
           sigma_size_ = fRound(point.size / ratio);
           point.pt.x = static_cast<float>(jx);
           point.pt.y = static_cast<float>(ix);
@@ -305,8 +309,10 @@ void AKAZEFeatures::Find_Scale_Space_Extrema(std::vector<cv::KeyPoint>& kpts)
 
             if ((point.class_id - 1) == kpts_aux[ik].class_id ||
                 point.class_id == kpts_aux[ik].class_id) {
-              dist = sqrt(pow(point.pt.x*ratio - kpts_aux[ik].pt.x, 2) + pow(point.pt.y*ratio - kpts_aux[ik].pt.y, 2));
-              if (dist <= point.size) {
+              float distx = point.pt.x*ratio - kpts_aux[ik].pt.x;
+              float disty = point.pt.y*ratio - kpts_aux[ik].pt.y;
+              dist = distx * distx + disty * disty;
+              if (dist <= point.size * point.size) {
                 if (point.response > kpts_aux[ik].response) {
                   id_repeated = (int)ik;
                   is_repeated = true;
@@ -349,6 +355,8 @@ void AKAZEFeatures::Find_Scale_Space_Extrema(std::vector<cv::KeyPoint>& kpts)
           } //if is_extremum
         }
       } // for jx
+      prev = curr;
+      curr = next;
     } // for ix
   } // for i
 
@@ -361,8 +369,10 @@ void AKAZEFeatures::Find_Scale_Space_Extrema(std::vector<cv::KeyPoint>& kpts)
 
       // Compare response with the upper scale
       if ((pt.class_id + 1) == kpts_aux[j].class_id) {
-        dist = sqrt(pow(pt.pt.x - kpts_aux[j].pt.x, 2) + pow(pt.pt.y - kpts_aux[j].pt.y, 2));
-        if (dist <= pt.size) {
+        float distx = pt.pt.x - kpts_aux[j].pt.x;
+        float disty = pt.pt.y - kpts_aux[j].pt.y;
+        dist = distx * distx + disty * disty;
+        if (dist <= pt.size * pt.size) {
           if (pt.response < kpts_aux[j].response) {
             is_repeated = true;
             break;
@@ -386,12 +396,12 @@ void AKAZEFeatures::Do_Subpixel_Refinement(std::vector<cv::KeyPoint>& kpts)
   float Dx = 0.0, Dy = 0.0, ratio = 0.0;
   float Dxx = 0.0, Dyy = 0.0, Dxy = 0.0;
   int x = 0, y = 0;
-  cv::Mat A = cv::Mat::zeros(2, 2, CV_32F);
-  cv::Mat b = cv::Mat::zeros(2, 1, CV_32F);
-  cv::Mat dst = cv::Mat::zeros(2, 1, CV_32F);
+  Matx22f A(0, 0, 0, 0);
+  Vec2f b(0, 0);
+  Vec2f dst(0, 0);
 
   for (size_t i = 0; i < kpts.size(); i++) {
-    ratio = pow(2.f, kpts[i].octave);
+    ratio = fastpow(2, kpts[i].octave);
     x = fRound(kpts[i].pt.x / ratio);
     y = fRound(kpts[i].pt.y / ratio);
 
@@ -416,19 +426,20 @@ void AKAZEFeatures::Do_Subpixel_Refinement(std::vector<cv::KeyPoint>& kpts)
         + (*(evolution_[kpts[i].class_id].Ldet.ptr<float>(y + 1) + x - 1)));
 
     // Solve the linear system
-    *(A.ptr<float>(0)) = Dxx;
-    *(A.ptr<float>(1) + 1) = Dyy;
-    *(A.ptr<float>(0) + 1) = *(A.ptr<float>(1)) = Dxy;
-    *(b.ptr<float>(0)) = -Dx;
-    *(b.ptr<float>(1)) = -Dy;
+    A(0, 0) = Dxx;
+    A(1, 1) = Dyy;
+    A(0, 1) = A(1, 0) = Dxy;
+    b(0) = -Dx;
+    b(1) = -Dy;
 
     cv::solve(A, b, dst, DECOMP_LU);
 
-    if (fabs(*(dst.ptr<float>(0))) <= 1.0f && fabs(*(dst.ptr<float>(1))) <= 1.0f) {
-      kpts[i].pt.x = x + (*(dst.ptr<float>(0)));
-      kpts[i].pt.y = y + (*(dst.ptr<float>(1)));
-      kpts[i].pt.x *= powf(2.f, (float)evolution_[kpts[i].class_id].octave);
-      kpts[i].pt.y *= powf(2.f, (float)evolution_[kpts[i].class_id].octave);
+    if (fabs(dst(0)) <= 1.0f && fabs(dst(1)) <= 1.0f) {
+        kpts[i].pt.x = x + dst(0);
+      kpts[i].pt.y = y + dst(1);
+      int power = fastpow(2, evolution_[kpts[i].class_id].octave);
+      kpts[i].pt.x *= power;
+      kpts[i].pt.y *= power;
       kpts[i].angle = 0.0;
 
       // In OpenCV the size of a keypoint its the diameter
@@ -754,7 +765,8 @@ void AKAZEFeatures::Compute_Main_Orientation(cv::KeyPoint& kpt, const std::vecto
 
   int ix = 0, iy = 0, idx = 0, s = 0, level = 0;
   float xf = 0.0, yf = 0.0, gweight = 0.0, ratio = 0.0;
-  std::vector<float> resX(109), resY(109), Ang(109);
+  const int ang_size = 109;
+  float resX[ang_size], resY[ang_size], Ang[ang_size];
   const int id[] = { 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6 };
 
   // Variables for computing the dominant direction
@@ -778,17 +790,17 @@ void AKAZEFeatures::Compute_Main_Orientation(cv::KeyPoint& kpt, const std::vecto
         resX[idx] = gweight*(*(evolution_[level].Lx.ptr<float>(iy)+ix));
         resY[idx] = gweight*(*(evolution_[level].Ly.ptr<float>(iy)+ix));
 
-        Ang[idx] = getAngle(resX[idx], resY[idx]);
         ++idx;
       }
     }
   }
+  fastAtan2(resY, resX, Ang, ang_size, false);
   // Loop slides pi/3 window around feature point
   for (ang1 = 0; ang1 < (float)(2.0 * CV_PI); ang1 += 0.15f) {
     ang2 = (ang1 + (float)(CV_PI / 3.0) >(float)(2.0*CV_PI) ? ang1 - (float)(5.0*CV_PI / 3.0) : ang1 + (float)(CV_PI / 3.0));
     sumX = sumY = 0.f;
 
-    for (size_t k = 0; k < Ang.size(); ++k) {
+    for (size_t k = 0; k < ang_size; ++k) {
       // Get angle from the x-axis of the sample point
       const float & ang = Ang[k];
 
@@ -1300,10 +1312,16 @@ void MLDB_Full_Descriptor_Invoker::Get_MLDB_Full_Descriptor(const cv::KeyPoint& 
   const AKAZEOptions & options = *options_;
   const std::vector<TEvolution>& evolution = *evolution_;
 
+  const int max_channels = 3;
+  CV_Assert(options.descriptor_channels <= max_channels);
+  float values_1_buf[4*max_channels];
+  float values_2_buf[9*max_channels];
+  float values_3_buf[16*max_channels];
+
   // Matrices for the M-LDB descriptor
-  cv::Mat values_1 = cv::Mat::zeros(4, options.descriptor_channels, CV_32FC1);
-  cv::Mat values_2 = cv::Mat::zeros(9, options.descriptor_channels, CV_32FC1);
-  cv::Mat values_3 = cv::Mat::zeros(16, options.descriptor_channels, CV_32FC1);
+  cv::Mat values_1(4, options.descriptor_channels, CV_32FC1, values_1_buf);
+  cv::Mat values_2(9, options.descriptor_channels, CV_32FC1, values_2_buf);
+  cv::Mat values_3(16, options.descriptor_channels, CV_32FC1, values_3_buf);
 
   // Get the information from the keypoint
   ratio = (float)(1 << kpt.octave);
