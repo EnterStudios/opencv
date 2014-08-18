@@ -648,6 +648,10 @@ public:
   }
 
   void Get_MLDB_Full_Descriptor(const cv::KeyPoint& kpt, unsigned char* desc) const;
+  void MLDB_Fill_Values(float* values, int sample_step, int level,
+                        float xf, float yf, float co, float si, float scale) const;
+  void MLDB_Binary_Comparisons(float* values, unsigned char* desc,
+                               int count, int& dpos) const;
 
 private:
   std::vector<cv::KeyPoint>* keypoints_;
@@ -1293,6 +1297,83 @@ void Upright_MLDB_Full_Descriptor_Invoker::Get_Upright_MLDB_Full_Descriptor(cons
   }
 }
 
+void MLDB_Full_Descriptor_Invoker::MLDB_Fill_Values(float* values, int sample_step, int level,
+                                                    float xf, float yf, float co, float si, float scale) const
+{
+    const std::vector<TEvolution>& evolution = *evolution_;
+    int pattern_size = options_->descriptor_pattern_size;
+    int chan = options_->descriptor_channels;
+    int valpos = 0;
+
+    for (int i = -pattern_size; i < pattern_size; i += sample_step) {
+        for (int j = -pattern_size; j < pattern_size; j += sample_step) {
+            float di, dx, dy;
+            di = dx = dy = 0.0;
+            int nsamples = 0;
+
+            for (int k = i; k < i + sample_step; k++) {
+              for (int l = j; l < j + sample_step; l++) {
+                float sample_y = yf + (l*co * scale + k*si*scale);
+                float sample_x = xf + (-l*si * scale + k*co*scale);
+
+                int y1 = fRound(sample_y);
+                int x1 = fRound(sample_x);
+
+                float ri = *(evolution[level].Lt.ptr<float>(y1)+x1);
+                di += ri;
+
+                if(chan > 1) {
+                    float rx = *(evolution[level].Lx.ptr<float>(y1)+x1);
+                    float ry = *(evolution[level].Ly.ptr<float>(y1)+x1);
+                    if (chan == 2) {
+                      dx += sqrtf(rx*rx + ry*ry);
+                    }
+                    else {
+                      float rry = rx*co + ry*si;
+                      float rrx = -rx*si + ry*co;
+                      dx += rrx;
+                      dy += rry;
+                    }
+                }
+                nsamples++;
+              }
+            }
+            di /= nsamples;
+            dx /= nsamples;
+            dy /= nsamples;
+
+            values[valpos] = di;
+            if (chan > 1) {
+                values[valpos + 1] = dx;
+            }
+            if (chan > 2) {
+              values[valpos + 2] = dy;
+            }
+            valpos += chan;
+          }
+        }
+}
+
+void MLDB_Full_Descriptor_Invoker::MLDB_Binary_Comparisons(float* values, unsigned char* desc,
+                                                           int count, int& dpos) const {
+    int chan = options_->descriptor_channels;
+    int* ivalues = (int*) values;
+    for(int i = 0; i < count * chan; i++) {
+        ivalues[i] = CV_TOGGLE_FLT(ivalues[i]);
+    }
+
+    for(int pos = 0; pos < chan; pos++) {
+        for (int i = 0; i < count; i++) {
+            int ival = ivalues[chan * i + pos];
+            for (int j = i + 1; j < count; j++) {
+                int res = ival > ivalues[chan * j + pos];
+                desc[dpos >> 3] |= (res << (dpos & 7));
+                dpos++;
+            }
+        }
+    }
+}
+
 /* ************************************************************************* */
 /**
  * @brief This method computes the descriptor of the provided keypoint given the
@@ -1302,301 +1383,26 @@ void Upright_MLDB_Full_Descriptor_Invoker::Get_Upright_MLDB_Full_Descriptor(cons
  */
 void MLDB_Full_Descriptor_Invoker::Get_MLDB_Full_Descriptor(const cv::KeyPoint& kpt, unsigned char *desc) const {
 
-  float di = 0.0, dx = 0.0, dy = 0.0, ratio = 0.0;
-  float ri = 0.0, rx = 0.0, ry = 0.0, rrx = 0.0, rry = 0.0, xf = 0.0, yf = 0.0;
-  float sample_x = 0.0, sample_y = 0.0, co = 0.0, si = 0.0, angle = 0.0;
-  int x1 = 0, y1 = 0, sample_step = 0, pattern_size = 0;
-  int level = 0, nsamples = 0, scale = 0;
-  int dcount1 = 0, dcount2 = 0;
-
-  const AKAZEOptions & options = *options_;
-  const std::vector<TEvolution>& evolution = *evolution_;
-
   const int max_channels = 3;
-  CV_Assert(options.descriptor_channels <= max_channels);
-  float values_1_buf[4*max_channels];
-  float values_2_buf[9*max_channels];
-  float values_3_buf[16*max_channels];
+  CV_Assert(options_->descriptor_channels <= max_channels);
+  float values[16*max_channels];
+  const double size_mult[3] = {1, 2.0/3.0, 1.0/2.0};
 
-  // Matrices for the M-LDB descriptor
-  cv::Mat values_1(4, options.descriptor_channels, CV_32FC1, values_1_buf);
-  cv::Mat values_2(9, options.descriptor_channels, CV_32FC1, values_2_buf);
-  cv::Mat values_3(16, options.descriptor_channels, CV_32FC1, values_3_buf);
+  float ratio = 1 << kpt.octave;
+  float scale = fRound(0.5f*kpt.size / ratio);
+  float xf = kpt.pt.x / ratio;
+  float yf = kpt.pt.y / ratio;
+  float co = cos(kpt.angle);
+  float si = sin(kpt.angle);
+  int pattern_size = options_->descriptor_pattern_size;
 
-  // Get the information from the keypoint
-  ratio = (float)(1 << kpt.octave);
-  scale = fRound(0.5f*kpt.size / ratio);
-  angle = kpt.angle;
-  level = kpt.class_id;
-  yf = kpt.pt.y / ratio;
-  xf = kpt.pt.x / ratio;
-  co = cos(angle);
-  si = sin(angle);
+  int dpos = 0;
+  for(int lvl = 0; lvl < 3; lvl++) {
 
-  // First 2x2 grid
-  pattern_size = options.descriptor_pattern_size;
-  sample_step = pattern_size;
-
-  for (int i = -pattern_size; i < pattern_size; i += sample_step) {
-    for (int j = -pattern_size; j < pattern_size; j += sample_step) {
-
-      di = dx = dy = 0.0;
-      nsamples = 0;
-
-      for (float k = (float)i; k < i + sample_step; k++) {
-        for (float l = (float)j; l < j + sample_step; l++) {
-
-          // Get the coordinates of the sample point
-          sample_y = yf + (l*scale*co + k*scale*si);
-          sample_x = xf + (-l*scale*si + k*scale*co);
-
-          y1 = fRound(sample_y);
-          x1 = fRound(sample_x);
-
-          ri = *(evolution[level].Lt.ptr<float>(y1)+x1);
-          rx = *(evolution[level].Lx.ptr<float>(y1)+x1);
-          ry = *(evolution[level].Ly.ptr<float>(y1)+x1);
-
-          di += ri;
-
-          if (options.descriptor_channels == 2) {
-            dx += sqrtf(rx*rx + ry*ry);
-          }
-          else if (options.descriptor_channels == 3) {
-            // Get the x and y derivatives on the rotated axis
-            rry = rx*co + ry*si;
-            rrx = -rx*si + ry*co;
-            dx += rrx;
-            dy += rry;
-          }
-
-          nsamples++;
-        }
-      }
-
-      di /= nsamples;
-      dx /= nsamples;
-      dy /= nsamples;
-
-      *(values_1.ptr<float>(dcount2)) = di;
-      if (options.descriptor_channels > 1) {
-        *(values_1.ptr<float>(dcount2)+1) = dx;
-      }
-
-      if (options.descriptor_channels > 2) {
-        *(values_1.ptr<float>(dcount2)+2) = dy;
-      }
-
-      dcount2++;
-    }
-  }
-
-  // Do binary comparison first level
-  for (int i = 0; i < 4; i++) {
-    for (int j = i + 1; j < 4; j++) {
-      if (*(values_1.ptr<float>(i)) > *(values_1.ptr<float>(j))) {
-        desc[dcount1 / 8] |= (1 << (dcount1 % 8));
-      }
-      dcount1++;
-    }
-  }
-
-  if (options.descriptor_channels > 1) {
-    for (int i = 0; i < 4; i++) {
-      for (int j = i + 1; j < 4; j++) {
-        if (*(values_1.ptr<float>(i)+1) > *(values_1.ptr<float>(j)+1)) {
-          desc[dcount1 / 8] |= (1 << (dcount1 % 8));
-        }
-
-        dcount1++;
-      }
-    }
-  }
-
-  if (options.descriptor_channels > 2) {
-    for (int i = 0; i < 4; i++) {
-      for (int j = i + 1; j < 4; j++) {
-        if (*(values_1.ptr<float>(i)+2) > *(values_1.ptr<float>(j)+2)) {
-          desc[dcount1 / 8] |= (1 << (dcount1 % 8));
-        }
-        dcount1++;
-      }
-    }
-  }
-
-  // Second 3x3 grid
-  sample_step = static_cast<int>(ceil(pattern_size*2. / 3.));
-  dcount2 = 0;
-
-  for (int i = -pattern_size; i < pattern_size; i += sample_step) {
-    for (int j = -pattern_size; j < pattern_size; j += sample_step) {
-
-      di = dx = dy = 0.0;
-      nsamples = 0;
-
-      for (int k = i; k < i + sample_step; k++) {
-        for (int l = j; l < j + sample_step; l++) {
-
-          // Get the coordinates of the sample point
-          sample_y = yf + (l*scale*co + k*scale*si);
-          sample_x = xf + (-l*scale*si + k*scale*co);
-
-          y1 = fRound(sample_y);
-          x1 = fRound(sample_x);
-
-          ri = *(evolution[level].Lt.ptr<float>(y1)+x1);
-          rx = *(evolution[level].Lx.ptr<float>(y1)+x1);
-          ry = *(evolution[level].Ly.ptr<float>(y1)+x1);
-          di += ri;
-
-          if (options.descriptor_channels == 2) {
-            dx += sqrtf(rx*rx + ry*ry);
-          }
-          else if (options.descriptor_channels == 3) {
-            // Get the x and y derivatives on the rotated axis
-            rry = rx*co + ry*si;
-            rrx = -rx*si + ry*co;
-            dx += rrx;
-            dy += rry;
-          }
-
-          nsamples++;
-        }
-      }
-
-      di /= nsamples;
-      dx /= nsamples;
-      dy /= nsamples;
-
-      *(values_2.ptr<float>(dcount2)) = di;
-      if (options.descriptor_channels > 1) {
-        *(values_2.ptr<float>(dcount2)+1) = dx;
-      }
-
-      if (options.descriptor_channels > 2) {
-        *(values_2.ptr<float>(dcount2)+2) = dy;
-      }
-
-      dcount2++;
-    }
-  }
-
-  // Do binary comparison second level
-  for (int i = 0; i < 9; i++) {
-    for (int j = i + 1; j < 9; j++) {
-      if (*(values_2.ptr<float>(i)) > *(values_2.ptr<float>(j))) {
-        desc[dcount1 / 8] |= (1 << (dcount1 % 8));
-      }
-      dcount1++;
-    }
-  }
-
-  if (options.descriptor_channels > 1) {
-    for (int i = 0; i < 9; i++) {
-      for (int j = i + 1; j < 9; j++) {
-        if (*(values_2.ptr<float>(i)+1) > *(values_2.ptr<float>(j)+1)) {
-          desc[dcount1 / 8] |= (1 << (dcount1 % 8));
-        }
-        dcount1++;
-      }
-    }
-  }
-
-  if (options.descriptor_channels > 2) {
-    for (int i = 0; i < 9; i++) {
-      for (int j = i + 1; j < 9; j++) {
-        if (*(values_2.ptr<float>(i)+2) > *(values_2.ptr<float>(j)+2)) {
-          desc[dcount1 / 8] |= (1 << (dcount1 % 8));
-        }
-        dcount1++;
-      }
-    }
-  }
-
-  // Third 4x4 grid
-  sample_step = pattern_size / 2;
-  dcount2 = 0;
-
-  for (int i = -pattern_size; i < pattern_size; i += sample_step) {
-    for (int j = -pattern_size; j < pattern_size; j += sample_step) {
-      di = dx = dy = 0.0;
-      nsamples = 0;
-
-      for (int k = i; k < i + sample_step; k++) {
-        for (int l = j; l < j + sample_step; l++) {
-
-          // Get the coordinates of the sample point
-          sample_y = yf + (l*scale*co + k*scale*si);
-          sample_x = xf + (-l*scale*si + k*scale*co);
-
-          y1 = fRound(sample_y);
-          x1 = fRound(sample_x);
-
-          ri = *(evolution[level].Lt.ptr<float>(y1)+x1);
-          rx = *(evolution[level].Lx.ptr<float>(y1)+x1);
-          ry = *(evolution[level].Ly.ptr<float>(y1)+x1);
-          di += ri;
-
-          if (options.descriptor_channels == 2) {
-            dx += sqrtf(rx*rx + ry*ry);
-          }
-          else if (options.descriptor_channels == 3) {
-            // Get the x and y derivatives on the rotated axis
-            rry = rx*co + ry*si;
-            rrx = -rx*si + ry*co;
-            dx += rrx;
-            dy += rry;
-          }
-
-          nsamples++;
-        }
-      }
-
-      di /= nsamples;
-      dx /= nsamples;
-      dy /= nsamples;
-
-      *(values_3.ptr<float>(dcount2)) = di;
-      if (options.descriptor_channels > 1)
-        *(values_3.ptr<float>(dcount2)+1) = dx;
-
-      if (options.descriptor_channels > 2)
-        *(values_3.ptr<float>(dcount2)+2) = dy;
-
-      dcount2++;
-    }
-  }
-
-  // Do binary comparison third level
-  for (int i = 0; i < 16; i++) {
-    for (int j = i + 1; j < 16; j++) {
-      if (*(values_3.ptr<float>(i)) > *(values_3.ptr<float>(j))) {
-        desc[dcount1 / 8] |= (1 << (dcount1 % 8));
-      }
-      dcount1++;
-    }
-  }
-
-  if (options.descriptor_channels > 1) {
-    for (int i = 0; i < 16; i++) {
-      for (int j = i + 1; j < 16; j++) {
-        if (*(values_3.ptr<float>(i)+1) > *(values_3.ptr<float>(j)+1)) {
-          desc[dcount1 / 8] |= (1 << (dcount1 % 8));
-        }
-        dcount1++;
-      }
-    }
-  }
-
-  if (options.descriptor_channels > 2) {
-    for (int i = 0; i < 16; i++) {
-      for (int j = i + 1; j < 16; j++) {
-        if (*(values_3.ptr<float>(i)+2) > *(values_3.ptr<float>(j)+2)) {
-          desc[dcount1 / 8] |= (1 << (dcount1 % 8));
-        }
-        dcount1++;
-      }
-    }
+      int val_count = (lvl + 2) * (lvl + 2);
+      int sample_step = static_cast<int>(ceil(pattern_size * size_mult[lvl]));
+      MLDB_Fill_Values(values, sample_step, kpt.class_id, xf, yf, co, si, scale);
+      MLDB_Binary_Comparisons(values, desc, val_count, dpos);
   }
 }
 

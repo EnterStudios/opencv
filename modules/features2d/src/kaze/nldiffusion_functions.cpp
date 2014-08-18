@@ -93,7 +93,21 @@ namespace cv {
              * @param k Contrast factor parameter
              */
             void pm_g1(const cv::Mat& Lx, const cv::Mat& Ly, cv::Mat& dst, float k) {
-                cv::exp(-(Lx.mul(Lx) + Ly.mul(Ly)) / (k*k), dst);
+
+              Size sz = Lx.size();
+              float inv_k = 1.0 / (k*k);
+              for (int y = 0; y < sz.height; y++) {
+
+                const float* Lx_row = Lx.ptr<float>(y);
+                const float* Ly_row = Ly.ptr<float>(y);
+                float* dst_row = dst.ptr<float>(y);
+
+                for (int x = 0; x < sz.width; x++) {
+                  dst_row[x] = (-inv_k*(Lx_row[x]*Lx_row[x] + Ly_row[x]*Ly_row[x]));
+                }
+              }
+
+              exp(dst, dst);
             }
 
             /* ************************************************************************* */
@@ -132,11 +146,25 @@ namespace cv {
              * Proceedings of Algorithmy 2000
              */
             void weickert_diffusivity(const cv::Mat& Lx, const cv::Mat& Ly, cv::Mat& dst, float k) {
-                Mat modg;
-                cv::pow((Lx.mul(Lx) + Ly.mul(Ly)) / (k*k), 4, modg);
-                cv::exp(-3.315f / modg, dst);
-                dst = 1.0f - dst;
+
+              Size sz = Lx.size();
+              float inv_k = 1.0 / (k*k);
+              for (int y = 0; y < sz.height; y++) {
+
+                const float* Lx_row = Lx.ptr<float>(y);
+                const float* Ly_row = Ly.ptr<float>(y);
+                float* dst_row = dst.ptr<float>(y);
+
+                for (int x = 0; x < sz.width; x++) {
+                  float dL = inv_k*(Lx_row[x]*Lx_row[x] + Ly_row[x]*Ly_row[x]);
+                  dst_row[x] = -3.315/(dL*dL*dL*dL);
+                }
+              }
+
+              exp(dst, dst);
+              dst = 1.0 - dst;
             }
+
 
             /* ************************************************************************* */
             /**
@@ -151,10 +179,22 @@ namespace cv {
             * Proceedings of Algorithmy 2000
             */
             void charbonnier_diffusivity(const cv::Mat& Lx, const cv::Mat& Ly, cv::Mat& dst, float k) {
-                Mat den;
-                cv::sqrt(1.0f + (Lx.mul(Lx) + Ly.mul(Ly)) / (k*k), den);
-                dst = 1.0f / den;
+
+              Size sz = Lx.size();
+              float inv_k = 1.0 / (k*k);
+              for (int y = 0; y < sz.height; y++) {
+
+                const float* Lx_row = Lx.ptr<float>(y);
+                const float* Ly_row = Ly.ptr<float>(y);
+                float* dst_row = dst.ptr<float>(y);
+
+                for (int x = 0; x < sz.width; x++) {
+                  float den = sqrt(1.0+inv_k*(Lx_row[x]*Lx_row[x] + Ly_row[x]*Ly_row[x]));
+                  dst_row[x] = 1.0 / den;
+                }
+              }
             }
+
 
             /* ************************************************************************* */
             /**
@@ -193,10 +233,10 @@ namespace cv {
 
                 // Skip the borders for computing the histogram
                 for (int i = 1; i < gaussian.rows - 1; i++) {
+                    const float *lx = Lx.ptr<float>(i);
+                    const float *ly = Ly.ptr<float>(i);
                     for (int j = 1; j < gaussian.cols - 1; j++) {
-                        lx = *(Lx.ptr<float>(i)+j);
-                        ly = *(Ly.ptr<float>(i)+j);
-                        modg = lx*lx + ly*ly;
+                        modg = lx[j]*lx[j] + ly[j]*ly[j];
 
                         // Get the maximum
                         if (modg > hmax) {
@@ -207,10 +247,10 @@ namespace cv {
                 hmax = sqrt(hmax);
                 // Skip the borders for computing the histogram
                 for (int i = 1; i < gaussian.rows - 1; i++) {
+                    const float *lx = Lx.ptr<float>(i);
+                    const float *ly = Ly.ptr<float>(i);
                     for (int j = 1; j < gaussian.cols - 1; j++) {
-                        lx = *(Lx.ptr<float>(i)+j);
-                        ly = *(Ly.ptr<float>(i)+j);
-                        modg = lx*lx + ly*ly;
+                        modg = lx[j]*lx[j] + ly[j]*ly[j];
 
                         // Find the correspondent bin
                         if (modg != 0.0) {
@@ -367,31 +407,32 @@ namespace cv {
 
                 cv::parallel_for_(cv::Range(1, Lstep.rows - 1), Nld_Step_Scalar_Invoker(Ld, c, Lstep, stepsize), (double)Ld.total()/(1 << 16));
 
+                float xneg, xpos, yneg, ypos;
+                float* dst = Lstep.ptr<float>(0);
+                const float* cprv = NULL;
                 const float* ccur  = c.ptr<float>(0);
                 const float* cnxt  = c.ptr<float>(1);
+                const float* ldprv = NULL;
                 const float* ldcur = Ld.ptr<float>(0);
                 const float* ldnxt = Ld.ptr<float>(1);
-                float* dst = Lstep.ptr<float>(0);
-
                 for (int j = 1; j < Lstep.cols - 1; j++) {
-                    float xpos = (ccur[j]   + ccur[j+1]) * (ldcur[j+1] - ldcur[j]);
-                    float xneg = (ccur[j-1] + ccur[j])   * (ldcur[j]   - ldcur[j-1]);
-                    float ypos = (ccur[j]   + cnxt[j])   * (ldnxt[j]   - ldcur[j]);
+                    xpos = (ccur[j]   + ccur[j+1]) * (ldcur[j+1] - ldcur[j]);
+                    xneg = (ccur[j-1] + ccur[j])   * (ldcur[j]   - ldcur[j-1]);
+                    ypos = (ccur[j]   + cnxt[j])   * (ldnxt[j]   - ldcur[j]);
                     dst[j] = 0.5f*stepsize*(xpos - xneg + ypos);
                 }
 
-                ccur = c.ptr<float>(Lstep.rows - 1);
-                const float* cprv = c.ptr<float>(Lstep.rows - 2);
                 dst = Lstep.ptr<float>(Lstep.rows - 1);
+                ccur = c.ptr<float>(Lstep.rows - 1);
+                cprv = c.ptr<float>(Lstep.rows - 2);
                 ldcur = Ld.ptr<float>(Lstep.rows - 1);
-                const float* ldprv = Ld.ptr<float>(Lstep.rows - 2);
+                ldprv = Ld.ptr<float>(Lstep.rows - 2);
 
                 for (int j = 1; j < Lstep.cols - 1; j++) {
-                    float xpos = (ccur[j] + ccur[j+1]) * (ldcur[j+1] - ldcur[j]);
-                    float xneg = (ccur[j-1] + ccur[j]) * (ldcur[j] - ldcur[j-1]);
-                    float ypos = (ccur[j] + ccur[j])   * (ldcur[j] - ldcur[j]);
-                    float yneg = (cprv[j] + ccur[j])   * (ldcur[j] - ldprv[j]);
-                    dst[j] = 0.5f*stepsize*(xpos - xneg + ypos - yneg);
+                    xpos = (ccur[j] + ccur[j+1]) * (ldcur[j+1] - ldcur[j]);
+                    xneg = (ccur[j-1] + ccur[j]) * (ldcur[j] - ldcur[j-1]);
+                    yneg = (cprv[j] + ccur[j])   * (ldcur[j] - ldprv[j]);
+                    dst[j] = 0.5f*stepsize*(xpos - xneg - yneg);
                 }
 
                 ccur = c.ptr<float>(1);
@@ -407,11 +448,10 @@ namespace cv {
                     ldnxt = Ld.ptr<float>(i + 1);
                     dst = Lstep.ptr<float>(i);
 
-                    float xpos = (ccur[0] + ccur[1]) * (ldcur[1] - ldcur[0]);
-                    float xneg = (ccur[0] + ccur[0]) * (ldcur[0] - ldcur[0]);
-                    float ypos = (ccur[0] + cnxt[0]) * (ldnxt[0] - ldcur[0]);
-                    float yneg = (cprv[0] + ccur[0]) * (ldcur[0] - ldprv[0]);
-                    dst[0] = 0.5f*stepsize*(xpos - xneg + ypos - yneg);
+                    xpos = (ccur[0] + ccur[1]) * (ldcur[1] - ldcur[0]);
+                    ypos = (ccur[0] + cnxt[0]) * (ldnxt[0] - ldcur[0]);
+                    yneg = (cprv[0] + ccur[0]) * (ldcur[0] - ldprv[0]);
+                    dst[0] = 0.5f*stepsize*(xpos + ypos - yneg);
 
                     xneg = (ccur[r1] + ccur[r0]) * (ldcur[r0] - ldcur[r1]);
                     ypos = (ccur[r0] + cnxt[r0]) * (ldnxt[r0] - ldcur[r0]);
@@ -423,7 +463,6 @@ namespace cv {
                     ldprv = ldcur;
                     ldcur = ldnxt;
                 }
-
                 Ld += Lstep;
             }
 
