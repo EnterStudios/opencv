@@ -6,13 +6,13 @@ using namespace perf;
 using std::tr1::make_tuple;
 using std::tr1::get;
 
-typedef perf::TestBaseWithParam<std::string> orb;
-
-#define ORB_IMAGES \
+#define AKAZE_IMAGES \
     "cv/detectors_descriptors_evaluation/images_datasets/leuven/img1.png",\
     "stitching/a3.png"
 
-PERF_TEST_P(orb, detect, testing::Values(ORB_IMAGES))
+typedef perf::TestBaseWithParam<std::string> akaze;
+
+PERF_TEST_P(akaze, detect, testing::Values(AKAZE_IMAGES))
 {
     string filename = getDataPath(GetParam());
     Mat frame = imread(filename, IMREAD_GRAYSCALE);
@@ -20,18 +20,17 @@ PERF_TEST_P(orb, detect, testing::Values(ORB_IMAGES))
     if (frame.empty())
         FAIL() << "Unable to load source image " << filename;
 
-    Mat mask;
     declare.in(frame);
-    ORB detector(1500, 1.3f, 1);
+    AKAZE alg;
     vector<KeyPoint> points;
 
-    TEST_CYCLE() detector(frame, mask, points);
+    TEST_CYCLE() alg.detect(frame, points);
 
     sort(points.begin(), points.end(), comparators::KeypointGreater());
-    SANITY_CHECK_KEYPOINTS(points, 1e-5);
+    SANITY_CHECK_KEYPOINTS(points);
 }
 
-PERF_TEST_P(orb, extract, testing::Values(ORB_IMAGES))
+PERF_TEST_P(akaze, extract, testing::Values(AKAZE_IMAGES))
 {
     string filename = getDataPath(GetParam());
     Mat frame = imread(filename, IMREAD_GRAYSCALE);
@@ -42,19 +41,19 @@ PERF_TEST_P(orb, extract, testing::Values(ORB_IMAGES))
     Mat mask;
     declare.in(frame);
 
-    ORB detector(1500, 1.3f, 1);
+    AKAZE alg(DESCRIPTOR_MLDB);
     vector<KeyPoint> points;
-    detector(frame, mask, points);
+    alg.detect(frame, points);
     sort(points.begin(), points.end(), comparators::KeypointGreater());
 
     Mat descriptors;
 
-    TEST_CYCLE() detector(frame, mask, points, descriptors, true);
+    TEST_CYCLE() alg.compute(frame, points, descriptors);
 
     SANITY_CHECK(descriptors);
 }
 
-PERF_TEST_P(orb, full, testing::Values(ORB_IMAGES))
+PERF_TEST_P(akaze, full, testing::Values(AKAZE_IMAGES))
 {
     string filename = getDataPath(GetParam());
     Mat frame = imread(filename, IMREAD_GRAYSCALE);
@@ -64,14 +63,14 @@ PERF_TEST_P(orb, full, testing::Values(ORB_IMAGES))
 
     Mat mask;
     declare.in(frame);
-    ORB detector(1500, 1.3f, 1);
+    AKAZE alg(DESCRIPTOR_MLDB);
 
     vector<KeyPoint> points;
     Mat descriptors;
 
-    TEST_CYCLE() detector(frame, mask, points, descriptors, false);
+    TEST_CYCLE() alg(frame, mask, points, descriptors, false);
 
     perf::sort(points, descriptors);
-    SANITY_CHECK_KEYPOINTS(points, 1e-5);
+    SANITY_CHECK_KEYPOINTS(points);
     SANITY_CHECK(descriptors);
 }
